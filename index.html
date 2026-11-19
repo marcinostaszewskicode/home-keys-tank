@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="pl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Czołg – nauka klawiatury</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#111}canvas{display:block}</style></head>
+<body><canvas id="c"></canvas><script>
+'use strict';
+/* ===== WSZYSTKIE WARTOŚCI ROZGRYWKI – ŁATWE DO ZMIANY ===== */
+const CONFIG={
+ LEVEL_FILES:['levels/level1.json','levels/level2.json','levels/level3.json','levels/level4.json','levels/level5.json'],
+ KEYS:{L_UP:'KeyR',L_BRAKE:'KeyF',L_DOWN:'KeyV',R_UP:'KeyU',R_BRAKE:'KeyJ',R_DOWN:'KeyM',
+       T_LEFT:'KeyD',T_RIGHT:'KeyK',FIRE:'Space',W_PREV:'KeyS',W_NEXT:'KeyL',PAUSE:'KeyP'},
+ TRACK_MAX:10,        // maks. prędkość gąsienicy (stopnie)
+ TAP_STEP:0.5,        // zmiana prędkości po jednym naciśnięciu
+ HOLD_RATE:5,         // stopnie/s przy przytrzymaniu (1 stopień / 0,2 s)
+ HOLD_DELAY:0.15,     // po jakim czasie przytrzymanie zaczyna działać ciągle (s)
+ ZERO_PAUSE:0.2,      // zatrzymanie na 0 przy zmianie kierunku (s)
+ BRAKE_RATE:5,        // tempo hamowania F/J (stopnie/s)
+ SPEED_SCALE:22,      // px/s na 1 stopień prędkości
+ TURN_BASE:160,       // "rozstaw" gąsienic – im mniejszy, tym szybszy obrót
+ TANK_R:24, TANK_HP:100,
+ TURRET_ACCEL:6, TURRET_MAX:2.2, TURRET_STOP_TIME:0.25, // rad/s², rad/s, s
+ RIFLE_CD:0.15, RIFLE_SPEED:700, RIFLE_RANGE:450, RIFLE_DMG:2,
+ CANNON_CHARGE:2, CANNON_MIN:150, CANNON_MAX:600, CANNON_SPLASH:60, CANNON_DMG:40, CANNON_FLIGHT:0.7, CANNON_CD:2,
+ OBJ_HP:80,           // niszczalne przeszkody i wieżyczki: 2 trafienia działa lub 40 pocisków karabinu
+ ENEMY_RANGE:550, ENEMY_INTERVAL:4, ENEMY_FLIGHT:1, ENEMY_SPLASH:55, ENEMY_DMG:20, ENEMY_SPREAD:70,
+ TOP_BAR:36, BOTTOM_BAR:110, VIEW_SCALE:1
+};
+const C=CONFIG,K=C.KEYS,cv=document.getElementById('c'),ctx=cv.getContext('2d');
+let dpr=1,W=0,H=0;
+function resize(){dpr=devicePixelRatio||1;W=innerWidth;H=innerHeight;cv.width=W*dpr;cv.height=H*dpr}
+addEventListener('resize',resize);resize();
+
+/* ===== KLAWIATURA ===== */
+const lab=c=>c.replace('Key','');
+const down={},pressed={},held={};
+addEventListener('keydown',e=>{if(e.code==='Space'||e.code.startsWith('Arrow'))e.preventDefault();if(e.repeat)return;down[e.code]=1;pressed[e.code]=1;held[e.code]=0});
+addEventListener('keyup',e=>delete down[e.code]);
+addEventListener('blur',()=>{for(const k in down)delete down[k]});
+addEventListener('mousedown',()=>{if(G.s==='menu')note('Użyj klawiszy J i K do poruszania się po liście, a Spacji do wyboru poziomu.')});
+const on=c=>G.L&&G.L.keys.includes(lab(c)), pr=c=>pressed[c]&&on(c), dn=c=>down[c]&&on(c);
+
+/* ===== STAN GRY ===== */
+const rd=()=>{try{return+localStorage.getItem('tankDone')||0}catch(e){return 0}};
+const G={s:'menu',sel:0,done:rd(),msg:'',msgT:0,dbg:false,t:0,L:null,T:null};
+const note=m=>{G.msg=m;G.msgT=4};
+const poly=a=>typeof a[0]==='number'?[[a[0],a[1]],[a[0]+a[2],a[1]],[a[0]+a[2],a[1]+a[3]],[a[0],a[1]+a[3]]]:a;
+
+function load(i){G.s='load';fetch(C.LEVEL_FILES[i]).then(r=>r.json()).then(d=>begin(d,i))
+ .catch(()=>{G.s='menu';note('Nie można wczytać poziomu – uruchom grę przez serwer WWW (np. GitHub Pages).')})}
+function begin(d,i){
+ const L=Object.assign({idx:i,weapons:[0]},d),b=d.bounds,m=400;
+ L.walls=(d.obstacles||[]).map(poly);
+ L.walls.push(poly([b[0]-m,b[1]-m,b[2]-b[0]+2*m,m]),poly([b[0]-m,b[3],b[2]-b[0]+2*m,m]),poly([b[0]-m,b[1],m,b[3]-b[1]]),poly([b[2],b[1],m,b[3]-b[1]]));
+ L.destr=(d.destructibles||[]).map(a=>({p:poly(a),hp:C.OBJ_HP}));
+ L.gate=d.gate?{p:poly(d.gate),open:false}:null;
+ L.coins=(d.coins||[]).map(c=>({x:c[0],y:c[1]}));
+ L.key=d.key?{x:d.key[0],y:d.key[1]}:null;
+ L.enemies=(d.enemies||[]).map(e=>({x:e[0],y:e[1],hp:C.OBJ_HP,t:C.ENEMY_INTERVAL*Math.random()}));
+ G.L=L;G.t=0;G.coins=0;G.shots=[];G.shells=[];G.fx=[];
+ G.T={x:0,y:0,a:0,tur:0,tw:0,hp:C.TANK_HP,l:{s:0,pz:0},r:{s:0,pz:0},wi:0,cd:0,ch:null};
+ G.s='play';
+}
+
+/* ===== GEOMETRIA ===== */
+function inPoly(x,y,p){let c=false;for(let i=0,j=p.length-1;i<p.length;j=i++){const[a,b]=p[i],[m,n]=p[j];if((b>y)!=(n>y)&&x<(m-a)*(y-b)/(n-b)+a)c=!c}return c}
+function near(x,y,p){let bx=0,by=0,bd=1e9;for(let i=0,j=p.length-1;i<p.length;j=i++){const[ax,ay]=p[j],[cx,cy]=p[i],dx=cx-ax,dy=cy-ay;
+ let t=((x-ax)*dx+(y-ay)*dy)/(dx*dx+dy*dy||1);t=Math.max(0,Math.min(1,t));const px=ax+t*dx,py=ay+t*dy,d=Math.hypot(x-px,y-py);if(d<bd){bd=d;bx=px;by=py}}return{x:bx,y:by,d:bd}}
+const solids=()=>{const L=G.L;return[...L.walls,...L.destr.filter(d=>d.hp>0).map(d=>d.p),...(L.gate&&!L.gate.open?[L.gate.p]:[])]};
+
+/* ===== AKTUALIZACJA ===== */
+function trk(t,kU,kD,kB,dt){
+ const nudge=d=>{if(t.pz>0)return;const s=t.s+d;if(t.s!==0&&t.s*s<=0){t.s=0;t.pz=C.ZERO_PAUSE}else t.s=Math.max(-C.TRACK_MAX,Math.min(C.TRACK_MAX,s))};
+ t.pz=Math.max(0,t.pz-dt);
+ for(const[k,dir]of[[kU,1],[kD,-1]]){if(!on(k))continue;if(pressed[k])nudge(dir*C.TAP_STEP);else if(down[k]&&held[k]>C.HOLD_DELAY)nudge(dir*C.HOLD_RATE*dt)}
+ if(dn(kB)){t.s-=Math.sign(t.s)*Math.min(Math.abs(t.s),C.BRAKE_RATE*dt)}
+}
+function damageAt(x,y,r,dmg){
+ for(const d of G.L.destr)if(d.hp>0&&(inPoly(x,y,d.p)||near(x,y,d.p).d<r))d.hp-=dmg;
+ for(const e of G.L.enemies)if(e.hp>0&&Math.hypot(e.x-x,e.y-y)<r)e.hp-=dmg;
+}
+function play(dt){
+ const L=G.L,T=G.T,R=C.TANK_R;G.t+=dt;
+ trk(T.l,K.L_UP,K.L_DOWN,K.L_BRAKE,dt);trk(T.r,K.R_UP,K.R_DOWN,K.R_BRAKE,dt);
+ const td=(dn(K.T_RIGHT)?1:0)-(dn(K.T_LEFT)?1:0);
+ if(td)T.tw=Math.max(-C.TURRET_MAX,Math.min(C.TURRET_MAX,T.tw+td*C.TURRET_ACCEL*dt));
+ else T.tw-=Math.sign(T.tw)*Math.min(Math.abs(T.tw),C.TURRET_MAX/C.TURRET_STOP_TIME*dt);
+ T.tur+=T.tw*dt;
+ const vl=T.l.s*C.SPEED_SCALE,vr=T.r.s*C.SPEED_SCALE,v=(vl+vr)/2;
+ T.a+=(vl-vr)/C.TURN_BASE*dt;T.x+=Math.sin(T.a)*v*dt;T.y-=Math.cos(T.a)*v*dt;
+ for(let k=0;k<3;k++){
+  for(const p of solids()){const n=near(T.x,T.y,p),ins=inPoly(T.x,T.y,p);
+   if(ins||n.d<R){let dx=ins?n.x-T.x:T.x-n.x,dy=ins?n.y-T.y:T.y-n.y;const d=Math.hypot(dx,dy)||1;T.x=n.x+dx/d*R;T.y=n.y+dy/d*R}}
+  for(const e of L.enemies)if(e.hp>0){const d=Math.hypot(T.x-e.x,T.y-e.y)||1;if(d<R+16){T.x=e.x+(T.x-e.x)/d*(R+16);T.y=e.y+(T.y-e.y)/d*(R+16)}}
+ }
+ // broń
+ const n=L.weapons.length;
+ if(pr(K.W_PREV)||pr(K.W_NEXT)){T.wi=(T.wi+(pr(K.W_NEXT)?1:-1)+n)%n;T.ch=null}
+ const wp=L.weapons[T.wi],ang=T.a+T.tur,dx=Math.sin(ang),dy=-Math.cos(ang);
+ if(T.cd>0)T.cd-=dt;
+ if(wp===0&&dn(K.FIRE)&&T.cd<=0){T.cd=C.RIFLE_CD;G.shots.push({x:T.x+dx*30,y:T.y+dy*30,vx:dx*C.RIFLE_SPEED,vy:dy*C.RIFLE_SPEED,d:0})}
+ if(wp===1&&T.cd<=0){
+  if(dn(K.FIRE))T.ch=Math.min(1,(T.ch||0)+dt/C.CANNON_CHARGE);
+  else if(T.ch!=null){const r=C.CANNON_MIN+(C.CANNON_MAX-C.CANNON_MIN)*T.ch;
+   G.shells.push({x0:T.x,y0:T.y,x1:T.x+dx*r,y1:T.y+dy*r,t:0,T:C.CANNON_FLIGHT});T.ch=null;T.cd=C.CANNON_CD}
+ }
+ // pociski karabinu
+ for(const s of G.shots){const steps=Math.ceil(C.RIFLE_SPEED*dt/5);
+  for(let i=0;i<steps&&!s.dead;i++){s.x+=s.vx*dt/steps;s.y+=s.vy*dt/steps;s.d+=C.RIFLE_SPEED*dt/steps;
+   if(s.d>C.RIFLE_RANGE)s.dead=1;
+   for(const e of L.enemies)if(e.hp>0&&Math.hypot(e.x-s.x,e.y-s.y)<16){e.hp-=C.RIFLE_DMG;s.dead=1}
+   for(const d of L.destr)if(d.hp>0&&inPoly(s.x,s.y,d.p)){d.hp-=C.RIFLE_DMG;s.dead=1}
+   if(!s.dead)for(const p of solids())if(inPoly(s.x,s.y,p)){s.dead=1;break}}}
+ // pociski armatnie
+ for(const s of G.shells){s.t+=dt;if(s.t>=s.T){s.dead=1;
+  if(s.enemy){if(Math.hypot(T.x-s.x1,T.y-s.y1)<C.ENEMY_SPLASH)T.hp-=C.ENEMY_DMG;G.fx.push({x:s.x1,y:s.y1,r:C.ENEMY_SPLASH,t:.4})}
+  else{damageAt(s.x1,s.y1,C.CANNON_SPLASH,C.CANNON_DMG);G.fx.push({x:s.x1,y:s.y1,r:C.CANNON_SPLASH,t:.4})}}}
+ for(const f of G.fx)f.t-=dt;
+ G.shots=G.shots.filter(s=>!s.dead);G.shells=G.shells.filter(s=>!s.dead);G.fx=G.fx.filter(f=>f.t>0);
+ // wrogowie
+ for(const e of L.enemies)if(e.hp>0&&Math.hypot(T.x-e.x,T.y-e.y)<C.ENEMY_RANGE){e.t-=dt;
+  if(e.t<=0){e.t=C.ENEMY_INTERVAL;const a=Math.random()*6.283,r=Math.sqrt(Math.random())*C.ENEMY_SPREAD;
+   G.shells.push({enemy:1,x1:T.x+Math.cos(a)*r,y1:T.y+Math.sin(a)*r,t:0,T:C.ENEMY_FLIGHT})}}
+ // zbieranie
+ L.coins=L.coins.filter(c=>Math.hypot(T.x-c.x,T.y-c.y)>R+8||(G.coins++,false));
+ if(L.key&&Math.hypot(T.x-L.key.x,T.y-L.key.y)<R+10){L.key=null;L.gate.open=true}
+ if(Math.hypot(T.x-L.exit[0],T.y-L.exit[1])<20){G.done=Math.max(G.done,L.idx+1);try{localStorage.setItem('tankDone',G.done)}catch(e){}G.s='win'}
+ if(T.hp<=0)G.s='over';
+}
+function update(dt){
+ if(G.msgT>0)G.msgT-=dt;
+ for(const k in down)held[k]=(held[k]||0)+dt;
+ if(pressed.F2)G.dbg=!G.dbg;
+ const n=C.LEVEL_FILES.length;
+ if(G.s==='menu'){const mx=Math.min(G.done,n-1);
+  if(pressed.KeyK||pressed.ArrowDown)G.sel=Math.min(G.sel+1,mx);
+  if(pressed.KeyJ||pressed.ArrowUp)G.sel=Math.max(G.sel-1,0);
+  if(pressed.Space||pressed.Enter)load(G.sel);
+ }else if(G.s==='play'){if(pressed[K.PAUSE])G.s='pause';else play(dt)}
+ else if(G.s==='pause'){if(pressed[K.PAUSE])G.s='play';if(pressed.Enter){G.s='menu'}}
+ else if(G.s==='over'||G.s==='win'){if(pressed.Enter||pressed.Space){G.s='menu';G.sel=Math.min(G.done,n-1)}}
+ for(const k in pressed)delete pressed[k];
+}
+
+/* ===== RYSOWANIE ===== */
+const pp=p=>{ctx.beginPath();p.forEach((q,i)=>i?ctx.lineTo(q[0],q[1]):ctx.moveTo(q[0],q[1]));ctx.closePath()};
+function circ(x,y,r,f,s,lw){ctx.beginPath();ctx.arc(x,y,r,0,7);if(f){ctx.fillStyle=f;ctx.fill()}if(s){ctx.strokeStyle=s;ctx.lineWidth=lw||2;ctx.stroke()}}
+function txt(s,x,y,sz,col,al){ctx.font=(sz||16)+'px sans-serif';ctx.fillStyle=col||'#fff';ctx.textAlign=al||'left';ctx.fillText(s,x,y)}
+const KB=[['KeyA',0,1,'A'],['KeyS',1,1,'S'],['KeyD',2,1,'D'],['KeyF',3,1,'F'],['KeyJ',4.6,1,'J'],['KeyK',5.6,1,'K'],['KeyL',6.6,1,'L'],['Semicolon',7.6,1,';'],
+ ['KeyR',2.75,0,'R'],['KeyU',4.35,0,'U'],['KeyV',3.5,2,'V'],['KeyM',5.1,2,'M'],['KeyP',7.35,0,'P'],['Space',2,3,'Spacja',5]];
+
+function drawWorld(w,h){
+ const L=G.L,T=G.T,y0=C.TOP_BAR,y1=h-C.BOTTOM_BAR,cx=w/2,cy=(y0+y1)/2;
+ ctx.save();ctx.beginPath();ctx.rect(0,y0,w,y1-y0);ctx.clip();
+ ctx.fillStyle=L.colors.wall;ctx.fillRect(0,y0,w,y1-y0);
+ ctx.translate(cx,cy);ctx.scale(C.VIEW_SCALE,C.VIEW_SCALE);ctx.rotate(-T.a);ctx.translate(-T.x,-T.y);
+ const b=L.bounds;ctx.fillStyle=L.colors.floor;ctx.fillRect(b[0],b[1],b[2]-b[0],b[3]-b[1]);
+ ctx.fillStyle=L.colors.wall;for(const p of L.walls){pp(p);ctx.fill()}
+ if(L.gate&&!L.gate.open){pp(L.gate.p);ctx.fill();ctx.strokeStyle='#000';ctx.lineWidth=3;ctx.stroke()}
+ for(const d of L.destr)if(d.hp>0){pp(d.p);ctx.fillStyle='#9a9a9a';ctx.fill();ctx.strokeStyle='#000';ctx.lineWidth=3;ctx.stroke()}
+ [40,32,24,16].forEach((r,i)=>circ(L.exit[0],L.exit[1],r,i%2?'#fff':'#000'));
+ for(const c of L.coins)circ(c.x,c.y,8,'#fc0','#000',2);
+ if(L.key){circ(L.key.x,L.key.y,11,'#4cf','#000',2);circ(L.key.x,L.key.y,4,'#000')}
+ for(const e of L.enemies)if(e.hp>0){const a=Math.atan2(T.y-e.y,T.x-e.x);ctx.strokeStyle='#000';ctx.lineWidth=7;ctx.beginPath();ctx.moveTo(e.x,e.y);ctx.lineTo(e.x+Math.cos(a)*26,e.y+Math.sin(a)*26);ctx.stroke();circ(e.x,e.y,16,'#c33','#000',3)}
+ for(const s of G.shots)circ(s.x,s.y,3,'#fe0','#000',1);
+ for(const s of G.shells){const p=s.t/s.T;
+  if(s.enemy){circ(s.x1,s.y1,C.ENEMY_SPLASH,'rgba(255,0,0,'+0.2*p+')','#d00',2);circ(s.x1,s.y1,C.ENEMY_SPLASH*(1+(1-p)),null,'#d00',2)}
+  else circ(s.x0+(s.x1-s.x0)*p,s.y0+(s.y1-s.y0)*p,5+7*Math.sin(Math.PI*p),'#444','#000',2)}
+ for(const f of G.fx)circ(f.x,f.y,f.r*(1.3-f.t),'rgba(255,150,0,'+f.t*1.5+')');
+ if(G.dbg){ctx.strokeStyle='#f0f';ctx.lineWidth=1;for(const p of solids()){pp(p);ctx.stroke()}circ(T.x,T.y,C.TANK_R,null,'#f0f',1)}
+ ctx.restore();
+ // czołg (zawsze na środku, skierowany w górę)
+ ctx.save();ctx.translate(cx,cy);ctx.scale(C.VIEW_SCALE,C.VIEW_SCALE);
+ ctx.fillStyle='#222';ctx.fillRect(-27,-23,10,46);ctx.fillRect(17,-23,10,46);
+ ctx.fillStyle='#4a7';ctx.fillRect(-17,-21,34,42);ctx.strokeStyle='#000';ctx.lineWidth=2;ctx.strokeRect(-17,-21,34,42);
+ for(const[side,s]of[[-1,T.l.s],[1,T.r.s]]){const bh=s/C.TRACK_MAX*30;ctx.fillStyle='hsl('+(60-60*Math.abs(s)/C.TRACK_MAX)+',100%,50%)';ctx.fillRect(side*36-3,Math.min(0,-bh),6,Math.abs(bh))}
+ ctx.save();ctx.rotate(T.tur);ctx.fillStyle='#252';ctx.fillRect(-3,-32,6,32);circ(0,0,12,'#386','#000',2);ctx.restore();
+ if(T.ch!=null){const r=C.CANNON_MIN+(C.CANNON_MAX-C.CANNON_MIN)*T.ch;
+  circ(Math.sin(T.tur)*r,-Math.cos(T.tur)*r,C.CANNON_SPLASH*2,'rgba(255,255,255,.15)','#fff',2)}
+ ctx.restore();
+ if(G.t<12)L.hint.forEach((s,i)=>txt(s,w/2,y0+26+i*22,17,'#000','center'));
+}
+function drawHud(w,h){
+ const L=G.L,T=G.T,y1=h-C.BOTTOM_BAR;
+ ctx.fillStyle='#222';ctx.fillRect(0,0,w,C.TOP_BAR);ctx.fillRect(0,y1,w,C.BOTTOM_BAR);
+ txt('Poziom '+(L.idx+1)+': '+L.name,12,24,16);
+ txt('Monety: '+G.coins+(L.gate?(L.key?'   Klucz: brak':'   Klucz: ✓'):''),w/2-30,24,16,'#fc0');
+ if(L.weapons.length>1||L.keys.includes('Space'))txt('Broń: '+(L.weapons[T.wi]?'Działo':'Karabin'),w/2+190,24,16,'#9cf');
+ ctx.fillStyle='#555';ctx.fillRect(w-250,10,100,16);ctx.fillStyle='#e44';ctx.fillRect(w-250,10,100*Math.max(0,T.hp)/C.TANK_HP,16);
+ txt('[P] Pauza',w-130,24,16);
+ const u=25,x0=(w-9*u)/2,y0=y1+8;
+ for(const[c,x,y,l,kw]of KB){const act=c==='KeyP'||on(c);ctx.fillStyle=down[c]?'#fb0':act?'#ddd':'#444';
+  ctx.fillRect(x0+x*u,y0+y*u,(kw||1)*u-3,u-3);txt(l,x0+x*u+((kw||1)*u-3)/2,y0+y*u+16,l.length>1?11:13,'#000','center')}
+}
+function overlay(w,h,t1,t2){ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,w,h);txt(t1,w/2,h/2-10,40,'#fff','center');txt(t2,w/2,h/2+30,20,'#ccc','center')}
+function draw(){
+ const w=W,h=H;ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle='#222';ctx.fillRect(0,0,w,h);
+ if(G.s==='menu'||G.s==='load'){
+  txt('CZOŁG – nauka klawiatury',w/2,90,38,'#fff','center');
+  C.LEVEL_FILES.forEach((f,i)=>{const lock=i>G.done,s=(i===G.sel?'▶ ':'   ')+'Poziom '+(i+1)+(i<G.done?'  ✓ ukończony':lock?'  (zablokowany)':'  – następny');
+   txt(s,w/2-140,150+i*34,22,lock?'#666':i===G.sel?'#fd5':'#bcd')});
+  txt('J / K – wybór poziomu,  Spacja – start',w/2,h-70,18,'#aaa','center');
+  if(G.msgT>0)txt(G.msg,w/2,h-35,18,'#fc8','center');
+  if(G.s==='load')txt('Ładowanie…',w/2,h-100,18,'#fff','center');return}
+ drawWorld(w,h);drawHud(w,h);
+ if(G.s==='pause')overlay(w,h,'PAUZA','P – wznów,  Enter – wyjście do wyboru poziomów');
+ if(G.s==='over')overlay(w,h,'KONIEC GRY','Enter – powrót do wyboru poziomów');
+ if(G.s==='win')overlay(w,h,'POZIOM UKOŃCZONY!','Monety: '+G.coins+'   Enter – dalej');
+ if(G.dbg)txt('DEBUG L='+G.T.l.s.toFixed(1)+' R='+G.T.r.s.toFixed(1)+' x='+G.T.x.toFixed(0)+' y='+G.T.y.toFixed(0),10,C.TOP_BAR+16,13,'#f0f');
+}
+let last=performance.now();
+(function loop(t){const dt=Math.min(.05,(t-last)/1000);last=t;update(dt);draw();requestAnimationFrame(loop)})(last);
+</script></body></html>
