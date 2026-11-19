@@ -1,0 +1,9 @@
+{"name":"Wsteczny bieg","bounds":[-500,-800,500,100],
+"colors":{"floor":"#cfe8c8","wall":"#3d5a3a"},
+"keys":["R","F","U","J","V","M"],
+"hint":["V i M – cofanie lewą i prawą gąsienicą.","Wjedź do ślepego korytarza po klucz, potem wycofaj się.","Klucz otwiera bramę do tarczy."],
+"obstacles":[[-360,-460,40,380],[-240,-460,40,380],[-360,-500,160,40],[-100,-300,600,40],[250,-800,40,300],[100,-120,60,60]],
+"gate":[290,-520,210,20],
+"key":[-280,-420],
+"coins":[[-280,-250],[100,-450]],
+"exit":[400,-680]}

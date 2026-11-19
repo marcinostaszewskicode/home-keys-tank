@@ -1,0 +1,9 @@
+{"name":"Wieżyczka","bounds":[-600,-900,600,100],
+"colors":{"floor":"#efd9c4","wall":"#7a4a3a"},
+"keys":["R","F","U","J","V","M","Space","D","K"],
+"weapons":[0],
+"hint":["D i K – obracają wieżyczkę niezależnie od kadłuba.","Czerwone wieżyczki strzelają w Twoją stronę – uciekaj z kółka!","Możesz je zniszczyć karabinem."],
+"obstacles":[[-250,-300,120,120],[130,-480,120,120],[-300,-650,120,120]],
+"enemies":[[0,-450],[250,-750]],
+"coins":[[-450,-200],[450,-600]],
+"exit":[0,-850]}

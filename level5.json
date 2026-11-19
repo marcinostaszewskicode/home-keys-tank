@@ -1,0 +1,9 @@
+{"name":"Działo","bounds":[-600,-900,600,100],
+"colors":{"floor":"#e0d4ee","wall":"#4f3d6a"},
+"keys":["R","F","U","J","V","M","Space","D","K","S","L"],
+"weapons":[0,1],
+"hint":["S i L – zmiana broni (poprzednia / następna). Dostępne jest teraz działo.","Działo: przytrzymaj Spację – im dłużej, tym dalej poleci pocisk. Puść, aby strzelić.","Duże kółko pokazuje miejsce upadku. Po strzale działo ładuje się 2 s."],
+"obstacles":[[-600,-450,800,60],[-200,-700,800,60]],
+"enemies":[[-400,-600],[300,-800]],
+"coins":[[450,-300],[-450,-800]],
+"exit":[0,-850]}

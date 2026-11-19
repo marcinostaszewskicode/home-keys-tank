@@ -1,0 +1,9 @@
+{"name":"Ogień!","bounds":[-400,-900,400,100],
+"colors":{"floor":"#dde6ee","wall":"#4a5a6a"},
+"keys":["R","F","U","J","V","M","Space"],
+"weapons":[0],
+"hint":["Spacja – strzał z karabinu (cały czołg celuje lufą do przodu).","Szare bloki da się zniszczyć – strzelaj, aż znikną."],
+"obstacles":[[-400,-900,300,1000],[100,-900,300,1000]],
+"destructibles":[[-100,-340,200,40],[-100,-640,200,40]],
+"coins":[[0,-450],[0,-750]],
+"exit":[0,-820]}

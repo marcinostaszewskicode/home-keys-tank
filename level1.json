@@ -1,0 +1,7 @@
+{"name":"Pierwsze kroki","bounds":[-500,-1000,500,100],
+"colors":{"floor":"#e8dcb0","wall":"#6b5a3a"},
+"keys":["R","F","U","J"],
+"hint":["R i F – lewa gąsienica, U i J – prawa.","R / U przyspieszają do przodu, F / J hamują.","Różnica prędkości skręca czołg. Dojedź do tarczy!"],
+"obstacles":[[-500,-300,650,40],[-150,-620,650,40],[100,-120,60,60],[-220,-140,60,60]],
+"coins":[[380,-360],[-380,-700],[0,-780]],
+"exit":[0,-900]}
